@@ -1,0 +1,14 @@
+# Keil编译产物（每次重新编译都会生成，不需要上传）
+Objects/
+Listings/
+
+# Keil窗口布局文件（含个人电脑的绝对路径信息）
+*.uvguix.*
+*.uvoptx
+
+# 调试配置
+DebugConfig/
+
+# 备份文件和临时文件
+*.bak
+*~
