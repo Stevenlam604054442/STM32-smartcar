@@ -1,7 +1,7 @@
 /**
   ******************************************************************************
   * @file    main.c
-  * @brief   STM32智能小车主程序 - 集成演示：超声波避障+OLED显示+串口调试+红外遥控
+  * @brief   STM32智能小车主程序 - 集成演示：超声波避障+OLED显示+串口调试+红外遥控+按键控制+LED指示
   * @note    硬件平台: STM32F103C8T6 @ 72MHz, Keil MDK-ARM v5
   ******************************************************************************
   */
@@ -14,6 +14,7 @@
 #include "sound.h"
 #include "Serial.h"
 #include "IR.h"
+#include "LED.h"
 
 /* ======================== 全局变量 ======================== */
 uint16_t Distance = 0;          // 超声波测距值 (单位: mm)
@@ -64,12 +65,47 @@ int main(void)
             IR_Control();
         }
 
-        /* 5. 根据模式执行对应逻辑 */
+        /* 5. 按键扫描与处理 */
+        Key_Scan();             /* 非阻塞消抖扫描 */
+        {
+            uint8_t key = Key_GetPressed();
+            if (key == KEY_MODE)         /* K1: 循环切换模式 STOP→AUTO→MANUAL→STOP... */
+            {
+                Mode = (Mode + 1) % 3;
+                MotorSpeed = 0;
+                Motor_SetSpeedLeft(0);
+                Motor_SetSpeedRight(0);
+                Serial_Printf("[KEY] Mode -> %d\r\n", Mode);
+            }
+            else if (key == KEY_ESTOP)   /* K2: 急停 */
+            {
+                Mode = 0;
+                MotorSpeed = 0;
+                Motor_SetSpeedLeft(0);
+                Motor_SetSpeedRight(0);
+                Serial_Printf("[KEY] E-STOP!\r\n");
+            }
+        }
+
+        /* 6. LED状态指示 */
+        if (MotorSpeed != 0)
+            LED1_ON();              /* 电机运转 → 运行灯亮 */
+        else
+            LED1_OFF();             /* 电机停止 → 运行灯灭 */
+
+        if (Mode == 1 && Distance < 50)
+            LED2_Turn();             /* 自动避障+近距离 → 告警灯闪烁(每周期翻转) */
+        else if (Mode == 1 && Distance < 200)
+            LED2_ON();               /* 中距离 → 告警灯常亮提示 */
+        else
+            LED2_OFF();             /* 其他 → 灭 */
+
+        /* 7. 根据模式执行对应逻辑 */
         switch (Mode)
         {
         case 0:                         // 停止模式
-            Motor_SetSpeedRL(0);
-            Motor_SetSpeedUD(0);
+            Motor_SetSpeedLeft(0);
+            Motor_SetSpeedRight(0);
             break;
         case 1:                         // 自动避障模式
             Auto_Avoidance();
@@ -95,10 +131,11 @@ int main(void)
 void System_Init(void)
 {
     OLED_Init();           // OLED显示屏 (I2C软件模拟, PB8/PB9)
+    LED_Init();            // 状态指示灯 (PB4=运行灯, PB5=告警灯)
     sound_Init();          // 超声波模块 (HC-SR04, PB0/PA7, TIM3中断计时)
     Motor_Init();          // 直流电机 (TIM2 PWM输出 + GPIO方向控制)
     Serial_Init();         // 串口通信 (USART3, PB10/PB11, 9600bps)
-    Key_Init();            // 按键输入 (PA1/PA2 浮空输入)
+    Key_Init();            // 按键输入 (PB12=模式切换K1, PB13=急停K2)
     IR_Init();             // 红外遥控 (NEC协议, PA0上拉输入, TIM4输入捕获)
 
     Serial_Printf("STM32 Smart Car System Init OK\r\n");
@@ -116,7 +153,7 @@ void OLED_Display(void)
     OLED_ShowNum(1, 6, Distance, 5);
     OLED_ShowString(1, 12, "mm");
 
-    OLED_ShowString(2,  1, "Spd RL:");
+    OLED_ShowString(2,  1, "Spd L:");
     OLED_ShowSignedNum(2, 9, MotorSpeed, 4);
 
     OLED_ShowString(3,  1, "Mode:");
@@ -138,20 +175,21 @@ void Auto_Avoidance(void)
     if (Distance > 200)
     {
         MotorSpeed = 50;
-        Motor_SetSpeedRL(MotorSpeed);
-        Motor_SetSpeedUD(0);
+        Motor_SetSpeedLeft(MotorSpeed);
+        Motor_SetSpeedRight(MotorSpeed);
     }
     else if (Distance > 50)
     {
         MotorSpeed = 25;
-        Motor_SetSpeedRL(MotorSpeed);
-        Motor_SetSpeedUD(0);
+        Motor_SetSpeedLeft(MotorSpeed);
+        Motor_SetSpeedRight(MotorSpeed);
     }
     else
     {
+        /* 后退避让: 两边等速后退 */
         MotorSpeed = -40;
-        Motor_SetSpeedRL(MotorSpeed);
-        Motor_SetSpeedUD(0);
+        Motor_SetSpeedLeft(MotorSpeed);
+        Motor_SetSpeedRight(MotorSpeed);
         Delay_ms(500);
     }
 }
@@ -160,7 +198,7 @@ void Auto_Avoidance(void)
   * @brief  串口指令解析与执行
   * @note   指令集:
   *         '0' 停止 / '1' 自动避障 / '2' 手动控制
-  *         'w'前 's'后 'a'左 'd'右 ' '急停
+  *         'w'前(双轮前进) 's'后(双轮后退) 'a'左(差速左偏) 'd'右(差速右偏) ' '急停
   */
 void Serial_Control(void)
 {
@@ -179,23 +217,23 @@ void Serial_Control(void)
         Serial_Printf("Mode: MANUAL Control\r\n");
         break;
     case 'w': case 'W':
-        if (Mode == 2) { MotorSpeed = 60; Motor_SetSpeedRL(MotorSpeed); Motor_SetSpeedUD(0); }
+        if (Mode == 2) { MotorSpeed = 60; Motor_SetSpeedLeft(MotorSpeed); Motor_SetSpeedRight(MotorSpeed); }
         Serial_Printf("CMD: Forward\r\n");
         break;
     case 's': case 'S':
-        if (Mode == 2) { MotorSpeed = -60; Motor_SetSpeedRL(MotorSpeed); Motor_SetSpeedUD(0); }
+        if (Mode == 2) { MotorSpeed = -60; Motor_SetSpeedLeft(MotorSpeed); Motor_SetSpeedRight(MotorSpeed); }
         Serial_Printf("CMD: Backward\r\n");
         break;
     case 'a': case 'A':
-        if (Mode == 2) { Motor_SetSpeedRL(40); Motor_SetSpeedUD(40); }   /* 差速转向 */
+        if (Mode == 2) { Motor_SetSpeedLeft(20); Motor_SetSpeedRight(60); }   /* 左慢右快 → 车身左偏 */
         Serial_Printf("CMD: TurnLeft\r\n");
         break;
     case 'd': case 'D':
-        if (Mode == 2) { Motor_SetSpeedRL(-40); Motor_SetSpeedUD(-40); }
+        if (Mode == 2) { Motor_SetSpeedLeft(60); Motor_SetSpeedRight(20); }   /* 左快右慢 → 车身右偏 */
         Serial_Printf("CMD: TurnRight\r\n");
         break;
     case ' ':
-        MotorSpeed = 0; Motor_SetSpeedRL(0); Motor_SetSpeedUD(0);
+        MotorSpeed = 0; Motor_SetSpeedLeft(0); Motor_SetSpeedRight(0);
         Serial_Printf("CMD: E-STOP!\r\n");
         break;
     default:
@@ -223,32 +261,34 @@ void IR_Control(void)
     /* 模式切换 */
     case 0x16:  /* 按键"0" -> 停止 */
         Mode = 0; MotorSpeed = 0;
+        Motor_SetSpeedLeft(0);
+        Motor_SetSpeedRight(0);
         Serial_Printf("[IR] STOP\r\n");
         break;
 
     /* 方向控制（需在手动模式下生效） */
     case 0x18:  /* 按键"1" -> 前进 */
         if (Mode != 2) Mode = 2;
-        MotorSpeed = 60; Motor_SetSpeedRL(MotorSpeed); Motor_SetSpeedUD(0);
+        MotorSpeed = 60; Motor_SetSpeedLeft(MotorSpeed); Motor_SetSpeedRight(MotorSpeed);
         Serial_Printf("[IR] Forward\r\n");
         break;
     case 0x5E:  /* 按键"2" -> 后退 */
         if (Mode != 2) Mode = 2;
-        MotorSpeed = -60; Motor_SetSpeedRL(MotorSpeed); Motor_SetSpeedUD(0);
+        MotorSpeed = -60; Motor_SetSpeedLeft(MotorSpeed); Motor_SetSpeedRight(MotorSpeed);
         Serial_Printf("[IR] Backward\r\n");
         break;
     case 0x08:  /* 按键"3" -> 左转 */
         if (Mode != 2) Mode = 2;
-        Motor_SetSpeedRL(40); Motor_SetSpeedUD(40);
+        Motor_SetSpeedLeft(20); Motor_SetSpeedRight(60);
         Serial_Printf("[IR] TurnLeft\r\n");
         break;
     case 0x1C:  /* 按键"4" -> 右转 */
         if (Mode != 2) Mode = 2;
-        Motor_SetSpeedRL(-40); Motor_SetSpeedUD(-40);
+        Motor_SetSpeedLeft(60); Motor_SetSpeedRight(20);
         Serial_Printf("[IR] TurnRight\r\n");
         break;
     case 0x15:  /* VOL+ -> 急停 */
-        MotorSpeed = 0; Motor_SetSpeedRL(0); Motor_SetSpeedUD(0);
+        MotorSpeed = 0; Motor_SetSpeedLeft(0); Motor_SetSpeedRight(0);
         Serial_Printf("[IR] E-STOP!\r\n");
         break;
 
