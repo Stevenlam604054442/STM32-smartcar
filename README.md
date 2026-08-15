@@ -1,16 +1,17 @@
-# STM32 Smart Car — 智能小车控制系统 v2.0
+# STM32 Smart Car — 智能循迹小车 v4.0
 
-基于 **STM32F103C8T6** (ARM Cortex-M3) 的差速驱动智能小车系统，集成超声波自动避障、OLED 实时状态显示、直流电机双 H 桥 PWM 调速、串口人机交互、红外遥控、按键输入、LED 状态指示共 **7 大功能模块** 协同工作。
+基于 **STM32F103C8T6** (ARM Cortex-M3) + **FreeRTOS 实时操作系统**的智能循迹小车系统。采用 4 通道全 PWM 电机驱动、双路红外循迹传感器、HC-SR04 超声波测距（EXTI 外部中断）、七段数码管状态显示、USART1 串口通信, 通过 FreeRTOS 多任务调度实现自动循迹 + 丢线找回功能。
 
 ## 技术栈
 
 | 类别 | 技术 / 工具 |
 |------|------------|
 | MCU | STM32F103C8T6 (LQFP48, 64KB Flash, 20KB SRAM, 72MHz) |
+| RTOS | FreeRTOS V9.0.0 (抢占式调度, 1000Hz tick, 17KB 堆) |
 | 开发环境 | Keil MDK-ARM v5.x (µVision5) |
 | 驱动框架 | STM32 Standard Peripheral Library (标准外设库) |
-| 外设接口 | GPIO / TIM(PWM + 中断 + 输入捕获) / USART3 / 软件 I2C |
-| 编码协议 | NEC 红外遥控 (38kHz 载波, TIM4 解码) |
+| 外设接口 | GPIO / TIM(延时+PWM+中断) / USART1 / EXTI |
+| 任务同步 | Queue (消息队列) + Binary Semaphore (二值信号量) |
 
 ## 功能特性
 
@@ -18,13 +19,13 @@
 
 | # | 模块 | 硬件 | 关键技术 | 状态 |
 |---|------|------|---------|------|
-| 1 | **超声波测距** | HC-SR04 | TIM3 更新中断计时 (10kHz), 测距公式 `D=Time×1.7mm`, 量程 20~4000mm | ✅ 正常 |
-| 2 | **OLED 显示屏** | SSD1306 128×64 | 软件 I2C (PB8/PB9, ~400kHz), 4 行实时状态面板: 距离/速度/模式/IR码 | ✅ 正常 |
-| 3 | **电机 PWM 控制** | 直流减速电机 × 2 | TIM2 双通道输出比较 (≈20kHz), 双 H 桥方向控制, 速度范围 -100~+100 | ✅ 正常 |
-| 4 | **自动避障** | 超声波 + 电机联动 | 三段式距离策略 (>200mm 全速 / 50~200mm 减速 / <50mm 后退) | ✅ 正常 |
-| 5 | **串口通信** | USB-TTL | USART3 (9600bps, 8N1), 中断接收 + IDLE 帧, printf 重定向, WASD 指令集 | ✅ 正常 |
-| 6 | **红外遥控** | NEC 遥控器 | TIM4 CH1 输入捕获 (1MHz 计数), 三态状态机解码, 连发帧检测 | ✅ 正常 |
-| 7 | **按键 + LED** | 独立按键 × 2, LED × 2 | 非阻塞消抖状态机 (IDLE→DETECTED→CONFIRMED→RELEASED), 模式切换/急停/运行指示/告警闪烁 | ✅ 正常 |
+| 1 | **FreeRTOS 调度** | — | 抢占式 RTOS, 2 激活任务 + 2 注释任务, 信号量+队列同步 | ✅ 运行 |
+| 2 | **红外循迹** | TCRT5000 × 2 | PB12(右)/PB13(左), IPD 输入, `IRtracking_Lo/Ro()` 电平读取 | ✅ 运行 |
+| 3 | **电机驱动** | 直流减速电机 × 2 | TIM4 4通道 PWM (PB6~PB9), 速度范围 -100~+100, 4通道全PWM无方向脚 | ✅ 运行 |
+| 4 | **超声波测距** | HC-SR04 | PB15(Trig)+PB14(Echo), EXTI14 下降沿中断 + TIM3 10kHz 计时, `D=Time×1.7mm` | ⚠️ 任务已注释 |
+| 5 | **数码管显示** | 七段共阳极数码管 × 1 | PA0~PA7 段选, `LED_show_num(0~9)`, 显示循迹方向 | ✅ 运行 |
+| 6 | **串口通信** | USB-TTL | USART1 (PA9/PA10, 115200bps, 8N1), RXNE 中断接收, printf 重定向 | ✅ 运行 |
+| 7 | **按键输入** | 独立按键 × 1 | PA15 (IPU), `Get_key()` 用 `vTaskDelay(40)` 消抖, 启动循迹 | ✅ 运行 |
 
 ---
 
@@ -32,172 +33,221 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                         main.c — 主控调度                             │
-│   ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌────┐ ┌────┐ ┌────┐        │
-│   │ OLED │ │Sound │ │Motor │ │Serial│ │Key │ │ IR │ │LED │        │
-│   │I2C   │ │HC-04 │ │PWM   │ │USART3│ │GPIO│ │NEC │ │GPIO│       │
-│   │PB8/9 │ │PB0/7A│ │TIM2  │ │PB10/11│ │12/13│PA0/TIM4│PB4/5│     │
-│   └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └─┬──┘ └─┬──┘ └─┬──┘      │
-│      │        │        │        │        │       │       │          │
-├──────┴────────┴────────┴────────┴────────┴───────┴───────┴──────────┤
+│                    FreeRTOS — 抢占式调度内核                          │
+│                                                                      │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│   │  FollowLine  │  │   FindLine   │  │ Sound_distance│ (注释)      │
+│   │   跟线任务    │  │   找线任务    │  │   测距任务    │             │
+│   │  prio=1      │  │  prio=1      │  │  prio=1      │             │
+│   │  stack=256   │  │  stack=256   │  │  stack=128   │             │
+│   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘             │
+│          │                 │                 │                      │
+│          │   FindLine_Sem  │  Distance_SendQueue                     │
+│          │ ──────────────→ │ ──────────────→ │ (注释)              │
+│          │   getline_Sem   │                                        │
+│          │ ←────────────── │                                        │
+│          │                 │                                        │
+├──────────┴─────────────────┴─────────────────┴──────────────────────┤
 │                    STM32F103C8T6 @ 72 MHz                            │
-│                                                                    │
-│  ┌─────────┐ ┌──────────┐ ┌──────────┐                             │
-│  │  TIM2   │ │  TIM3    │ │  TIM4    │  NVIC Group 2              │
-│  │ 20kHz   │ │ 10kHz    │ │ 1MHz     │  Preempt[0..3] Sub[0..3]   │
-│  │ PWM×2CH │ │ Echo计时  │ │ IR捕获   │                             │
-│  │ 无中断   │ │ IRQ:2/1  │ │ IRQ:1/2  │                             │
-│  └─────────┘ └──────────┘ └──────────┘                             │
+│                                                                      │
+│  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                 │
+│  │  TIM2   │ │  TIM3    │ │  TIM4    │ │  USART1  │                 │
+│  │ 1MHz    │ │ 10kHz    │ │ 100Hz    │ │ 115200bps│                 │
+│  │ Delay_us│ │ Echo计时  │ │ PWM×4CH  │ │ RXNE IRQ │                 │
+│  │ 无中断   │ │ IRQ:6/0  │ │ 无中断   │ │ IRQ:7/0  │                 │
+│  └─────────┘ └──────────┘ └──────────┘ └──────────┘                 │
+│                                                                      │
+│  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                 │
+│  │ EXTI14  │ │ 循迹×2   │ │ 数码管   │ │  按键    │                 │
+│  │ Echo↓沿 │ │ PB12/13  │ │ PA0~PA7  │ │  PA15    │                 │
+│  │ IRQ:5/0 │ │ IPD      │ │ Out_PP   │ │ IPU      │                 │
+│  └─────────┘ └──────────┘ └──────────┘ └──────────┘                 │
+│                                                                      │
+│  NVIC Group 4 (4位抢占, 0位响应)  FreeRTOS: SVC/PendSV/SysTick       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 主循环调度流程 (100ms 周期)
+### 任务调度流程
 
 ```
-while(1):
-  ① sound_GetValue()         → 采集超声波距离 (阻塞约100ms)
-  ② OLED_Display()           → 刷新4行状态面板
-  ③ Serial_Control()         → 处理串口接收到的指令字节 (有数据时)
-  ④ IR_Control()             → 处理红外按键命令 (收到有效帧/连发帧时)
-  ⑤ Key_Scan() + Key_GetPressed() → 检测按键事件 (K1=模式切换, K2=急停)
-  ⑥ LED状态更新              → LED1=运行指示, LED2=避障告警
-  ⑦ switch(Mode):            → STOP / AUTO_Avoidance / MANUAL
-  ⑧ Delay_ms(100)            → 主循环节拍
+main():
+  ① NVIC_PriorityGroupConfig(Group_4)      ← FreeRTOS 必需配置
+  ② 初始化全部硬件: sound/Serial/Timer(sound+delay+pwm)/IRtracking/Motor/Key/LED
+  ③ 创建队列: Distance_SendQueue (3 × uint16_t)
+  ④ 创建信号量: FindLine_Semaphore + FindLine_getline_Semaphore
+  ⑤ 创建任务: FindLine + FollowLine (Sound_distance/SendMsg 已注释)
+  ⑥ vTaskStartScheduler()                   ← 启动 RTOS 调度器
+
+FollowLine 任务 (永久运行):
+  while(1):
+    LED_show_num(last_line_turn)             ← 数码管显示上次方向
+    if 循迹传感器检测到线:
+      双轮前进 (L=20, R=20)
+      if 仅左传感器检测到: 左停右转 (L=0, R=20), 记录 last=left
+      else:                   左转右停 (L=20, R=0), 记录 last=right
+    else (丢线):
+      根据 last_turn 反向找线
+      若 last=right: 左转 (L=20, R=0)
+      若 last=left:  右转 (L=0, R=20)
+      若 last=none:  启动 FindLine (原地自旋 L=+20, R=-20)
+
+FindLine 任务 (信号量触发):
+  while(1):
+    等待 FindLine_Semaphore
+    原地自旋 (L=+20, R=-20)
+    等待 FindLine_getline_Semaphore (3秒超时)
+    停车
 ```
 
 ---
 
-## 运行模式与操作说明
+## 循迹逻辑详解
 
-### 三种运行模式
+### 传感器布局
 
-| 模式 | 编号 | 进入方式 | 退出方式 | 行为描述 |
-|------|------|---------|---------|---------|
-| **停止** | `0` | 上电默认; 串口`0`; 红外`0`键; K2 急停 | 发送其他模式指令 | 双轮停止, LED1 灭 |
-| **自动避障** | `1` | 串口`1`; K1 循环切换 | 串口`0`/`2`; K1/K2 | 基于超声波三段策略自动行驶 |
-| **手动控制** | `2` | 串口`2`; 红外方向键(自动切); K1 循环切换 | 串口`0`/`1`; K1/K2 | 接受串口WASD或红外方向指令 |
+```
+        车头方向 ↑
+   ┌─────────────────┐
+   │  STM32 + FreeRTOS │
+   │                 │
+   │  PB13(左) PB12(右) │  ← TCRT5000 红外循迹传感器
+   └─────────────────┘
+```
 
-### 串口指令集 (Mode=2 时生效)
+- `IRtracking_Lo()` 返回 1 = 左传感器检测到黑线
+- `IRtracking_Ro()` 返回 1 = 右传感器检测到黑线
+- 传感器为 IPD (下拉输入), 检测到线时输出高电平
 
-| 字符 | 动作 | 左轮速度 | 右轮速度 | 串口回显 |
-|------|------|---------|---------|---------|
-| `0` | 切换到停止模式 | 0 | 0 | `Mode: STOP` |
-| `1` | 切换到自动避障 | — | — | `Mode: AUTO Avoidance` |
-| `2` | 切换到手控模式 | — | — | `Mode: MANUAL Control` |
-| `w` / `W` | 前进 | +60 | +60 | `CMD: Forward` |
-| `s` / `S` | 后退 | -60 | -60 | `CMD: Backward` |
-| `a` / `A` | 左偏转 | +20 | +60 | `CMD: TurnLeft` |
-| `d` / `D` | 右偏转 | +60 | +20 | `CMD: TurnRight` |  
-| `空格` | 急停 | 0 | 0 | `CMD: E-STOP!` |
-| 其他 | 未识别 | 不变 | 不变 | `ERR: Unknown cmd 'X'` |
+### 循迹状态决策表
 
-### 红外遥控按键映射 (常见 NEC 遥控器)
+| 左传感器 | 右传感器 | 左轮 | 右轮 | 车身行为 | last_turn 更新 |
+|---------|---------|------|------|---------|---------------|
+| 1 | 1 | +20 | +20 | 直行前进 | 保持 |
+| 1 | 0 | 0 | +20 | 右转 (左偏修正) | left |
+| 0 | 1 | +20 | 0 | 左转 (右偏修正) | right |
+| 0 | 0 (last=right) | +20 | 0 | 右转找线 | — |
+| 0 | 0 (last=left) | 0 | +20 | 左转找线 | — |
+| 0 | 0 (last=none) | +20 | -20 | 原地自旋 (启动 FindLine) | — |
 
-| NEC 键值 | 对应按键 | 触发的动作 | 备注 |
-|----------|---------|-----------|------|
-| `0x16` | `0` | 停止 (Mode=0) | 所有模式下生效 |
-| `0x18` | `1` | 前进 (+60/+60) | 自动切至 Mode=2 |
-| `0x5E` | `2` | 后退 (-60/-60) | 自动切至 Mode=2 |
-| `0x08` | `3` | 左偏转 (+20/+60) | 自动切至 Mode=2 |
-| `0x1C` | `4` | 右偏转 (+60/+20) | 自动切至 Mode=2 |
-| `0x15` | VOL+ | 急停 (0/0) | 所有模式下生效 |
-| 其他 | — | 仅显示键码,不执行动作 | OLED 第4行回显 |
+### 丢线找回策略
 
-### 按键操作
+1. **丢线瞬间**: 根据上次的 `last_turn` 反向寻找（上次右转就继续右转找）
+2. **3 秒超时**: 若 3 秒内未找到线, 触发 `FindLine_Semaphore` 启动找线任务
+3. **FindLine 任务**: 原地自旋 (左轮+20, 右轮-20), 直到循迹传感器再次检测到线
 
-| 按键 | 引脚 | 功能 | 行为 |
-|------|------|------|------|
-| **K1** (模式切换) | PB12 | 循环切换运行模式 | STOP → AUTO → MANUAL → STOP ... 同时停车 |
-| **K2** (急停) | PB13 | 立即紧急停止 | 强制回到 STOP 模式, 串口打印 `[KEY] E-STOP!` |
+---
 
-> 注: 两按键均为非阻塞单次触发, 长按不重复触发, 松手后才可再次响应。
+## 电机驱动说明
 
-### LED 状态编码
+### 4 通道全 PWM 架构
 
-| LED | 引脚 | 亮起条件 | 含义 |
-|-----|------|---------|------|
-| **LED1** (运行灯) | PB4 | `MotorSpeed != 0` | 电机正在运转 |
-| **LED2** (告警灯) | PB5 | `Mode==1 && Dist<50`: 每周期翻转(闪烁)<br>`Mode==1 && Dist>=200`: 常亮<br>`其他`: 熄灭 | 自动避障模式下的距离预警 |
+传统 H 桥用 2 个 GPIO 方向脚 + 1 个 PWM 脚; 本项目采用 **4 通道独立 PWM**, 每个 H 桥输入都接一路 TIM4 PWM 输出:
+
+```
+         左轮 H 桥                    右轮 H 桥
+   In1(PB6/CH1) ─┐              In3(PB8/CH3) ─┐
+                  ├─ 电机 ──┐                   ├─ 电机 ──┐
+   In2(PB7/CH2) ─┘          │      In4(PB9/CH4)┘          │
+                             │                              │
+                            GND                            GND
+```
+
+### 速度控制 API
+
+```c
+Motor_SetSpeedLeft(int8_t Speed);   // -100 ~ +100
+Motor_SetSpeedRight(int8_t Speed);  // -100 ~ +100
+```
+
+| Speed 值 | 行为 | 实现原理 |
+|----------|------|---------|
+| `+1 ~ +100` | 正转, 占空比 = Speed% | CH1/CH3 = Speed, CH2/CH4 = 0 |
+| `-1 ~ -100` | 反转, 占空比 = -Speed% | CH1/CH3 = 0, CH2/CH4 = -Speed |
+| `0` | 停止 | 4 通道全 0 |
+
+> **速度限幅**: API 内部会自动限幅到 ±100, 超出范围自动截断。
 
 ---
 
 ## 项目文件结构
 
 ```
-stm32小车/test/
+stm32小车/
 ├── user/
-│   ├── main.c                  # ★ 主程序: 初始化 + 主循环(7步) + 避障逻辑 + 串口/红外/按键处理
-│   ├── stm32f10x_it.c          # Cortex-M3 异常处理框架 (默认空 ISR)
+│   ├── main.c                  # ★ 主程序: FreeRTOS 任务定义 + 循迹逻辑 + 硬件初始化
+│   ├── stm32f10x_it.c          # ISR: TIM3(超声波计时) + EXTI15_10(距离计算) + USART1(串口接收)
+│   ├── stm32f10x_it.h          # 中断处理函数声明 (SVC/PendSV/SysTick 已注释, FreeRTOS 接管)
 │   └── stm32f10x_conf.h        # 外设库头文件使能配置
 │
-├── Hardware/                   # 外设驱动层 (每个模块 .c/.h 成对)
-│   ├── Motor.c / .h            # 双H桥电机: Init + SetSpeedLeft/Right (-100~+100), 方向脚 PA6/PA1+PA8/PA9
-│   ├── PWM.c / .h              # TIM2 底层: Init (PSC=36,ARR=99) + SetCompare3/4
-│   ├── sound.c / .h            # HC-SR04 超声波: Init + Start(Trig脉冲) + GetValue (Echo=PA7)
-│   ├── IR.c / .h               # NEC 红外: Init + GetCommand/DataFlag/RepeatFlag + Scan
-│   ├── Serial.c / .h           # USART3 串口: Init + Printf重定向 + GetRxData/RxFlag
-│   ├── OLED.c / .h             # SSD1306 显示: I2C软件模拟 + ShowString/Num/HexNum/SignedNum
-│   ├── Key.c / .h              # 按键输入: 非阻塞消抖状态机 (4态: Idle→Detected→Confirmed→Released)
-│   └── LED.c / .h              # 指示灯: ON/OFF/Turn × 2路
+├── Hardware/                   # 外设驱动层
+│   ├── Motor.c / .h            # 电机: Init + SetSpeedLeft/Right (-100~+100, TIM4 4通道PWM)
+│   ├── sound.c / .h            # HC-SR04: Init(EXTI14) + Start(Trig) + GetValue (Echo=PB14)
+│   ├── Irtracking.c / .h       # 循迹: Init + IRtracking_Lo/Ro (PB12/PB13)
+│   ├── Serial.c / .h           # USART1: Init(115200bps) + Printf重定向 + SendByte/Array/String/Number
+│   ├── Key.c / .h              # 按键: Init(PA15) + Get_key (vTaskDelay消抖)
+│   ├── LED.c / .h              # 数码管: Init(PA0~PA7) + LED_show_num(0~9) + LED_OFF/All_ON
+│   ├── IR.c / .h               # NEC 红外 (⚠️ 死代码, 未使用, 与 LED/TIM4 冲突)
 │
 ├── system/                     # 系统基础层
-│   ├── Timer.c / .h            # TIM3 超声波计时: Init (10kHz更新中断) + Time 全局变量
-│   ├── Delay.c / .h            # SysTick 精确延时: Delay_us/ms/s
-│   └── sys.c / .h              # 系统时钟配置 (RCC)
+│   ├── Timer.c / .h            # 三定时器初始化: Sound_Timer_Init(TIM3) + Delay_Timer_Init(TIM2) + PWM_Timer_Init(TIM4)
+│   ├── Delay.c / .h            # Delay_us (TIM2 忙等, 仅 µs 级)
+│   └── hardware.h              # ★ 全局引脚宏定义 (SOUND/MOTOR/IRTRACKING/KEY/LED/UART)
 │
-├── Start/                      # CMSIS 启动代码 (startup_stm32f10x_md.s 等)
+├── FREERTOS/                   # FreeRTOS 内核
+│   ├── include/                # FreeRTOS 头文件 (task.h, queue.h, semphr.h, ...)
+│   ├── src/                    # FreeRTOS 源码 (tasks.c, queue.c, list.c, ...)
+│   └── port/                   # 移植层 (port.c, heap_4.c, FreeRTOSConfig.h)
+│
+├── Start/                      # CMSIS 启动代码 + 内核文件
 ├── library/                    # STM32 标准外设库源码
-├── IO_TABLE.md                 # ★ 完整硬件资源分配表 (引脚/定时器/NVIC/冲突/功耗)
+├── IO_TABLE.md                 # ★ 完整硬件资源分配表 v4.0
 ├── README.md                   # 本文件
-└── 32test.uvprojx              # Keil 工程文件
+└── *.uvprojx                   # Keil 工程文件
 ```
 
 ---
 
 ## 设计亮点
 
-### 1. 定时器资源隔离 — 一定时器一职责
+### 1. FreeRTOS 实时操作系统
 
-| 定时器 | 用途 | 关键参数 | 设计考量 |
-|--------|------|---------|---------|
-| **TIM2** | 电机 PWM | PSC=36, ARR=99 → ≈20kHz, 双通道(CH3/CH4) | 超过音频范围避免噪声; 硬件PWM零CPU开销 |
-| **TIM3** | 超声波计时 | PSC=0, ARR=7199 → 10kHz 更新中断 (0.1ms/tick) | 与 TIM2 分离, 避免 Init 互相覆盖 |
-| **TIM4** | IR 解码 | PSC=71 → 1MHz计数 (1us分辨率), CH1输入捕获 | 单沿捕获+状态机比双沿翻转法减少一半中断次数 |
+- **抢占式调度**: 高优先级任务可抢占低优先级任务, 保证实时响应
+- **任务隔离**: 循迹、测距、消息处理各自独立任务, 互不阻塞
+- **同步原语**: 信号量 (任务启动) + 队列 (数据传递), 替代裸机的全局变量轮询
+- **NVIC Group 4**: 4 位全用于抢占优先级, FreeRTOS 在 Cortex-M3 的推荐配置
+- **17KB 堆**: 支持动态任务创建和队列分配
 
-### 2. 分层架构 — 应用 / 驱动 / 硬件三层解耦
+### 2. 4 通道全 PWM 电机驱动
 
-```
-main.c (应用层)        ← 业务逻辑: 模式调度 / 避障策略 / 指令解析
-    ↓ 只调用 API, 不操作寄存器
-Hardware/*.c (驱动层)   ← 封装硬件细节: Init / SetXxx / GetXxx
-    ↓ 统一接口, 可独立替换
-system/*.c (HAL层)     ← 底层抽象: 定时器配置 / SysTick延时 / 时钟初始化
-```
+- **无 GPIO 方向脚**: 每个电机正反转各用一路独立 PWM, 省去 GPIO 方向控制
+- **平滑过渡**: 正反转切换时 PWM 占空比独立控制, 避免传统 GPIO 切换的瞬时电流冲击
+- **硬件映射**: TIM4_CH1~CH4 完美对应 PB6~PB9 (STM32F103 默认复用映射)
+- **零 CPU 开销**: PWM 由硬件自动产生, 无需中断干预
 
-### 3. 多通道人机交互 — 串口 + 红外 + 按键三路并行
+### 3. 超声波 EXTI 中断驱动
 
-- **串口**: ASCII 文本指令 + printf 日志输出, 适合 PC 端调试
-- **红外**: NEC 编码手持遥控, 适合近距离无线操控
-- **按键**: 板载物理按钮, 最可靠的本地交互
-- 三路共享同一个 `Mode` 状态变量和 `MotorSpeed` 速度变量, 任一通道均可改变系统行为
-- OLED 实时回显所有关键状态量
+- **外部中断**: PB14(Echo) 下降沿触发 EXTI15_10, 在回波结束瞬间立即计算距离
+- **双定时器协作**: TIM3 负责 0.1ms 精确计时, EXTI 负责触发计算
+- **临界区保护**: `sound_Start()` 用 `taskENTER_CRITICAL()` 包裹触发脉冲, 防止被打断
+- **优于轮询**: 相比旧版的 TIM3 轮询电平, EXTI 中断响应更快、CPU 占用更低
 
-### 4. NEC 协议状态机解码 (IR.c)
+### 4. 循迹丢线找回策略
 
-采用 **纯下降沿捕获 + 三态有限状态机**, 相比传统双沿极性切换方案:
-- 每个 bit 只产生 1 次 ISR (vs 传统方案 2 次)
-- 内部变量全部 static 封装, 0 个全局污染
-- ±500µs 容差窗口 + dead zone 拒绝模糊值
-- 支持 Start(13.5ms)/Repeat(11.25ms)/Error 三分支判断
+- **记忆上次方向**: `last_line_turn` 记录最后一次检测到线的方向
+- **反向寻找**: 丢线时根据 `last_turn` 继续转向, 利用惯性找回线
+- **超时兜底**: 3 秒找不到线则启动 FindLine 任务原地自旋
+- **任务间协作**: FollowLine 通过信号量启动 FindLine, FindLine 找到线后通过信号量通知
 
-### 5. 非阻塞按键消抖 (Key.c)
+### 5. NVIC 优先级分层 (FreeRTOS 友好)
 
-四态状态机, 在主循环中每 10ms 扫描一步:
-- **IDLE** → 检测到低电平进入 DETECTED
-- **DETECTED** → 持续低电平 >20ms 进入 CONFIRMED (滤除机械抖动)
-- **CONFIRMED** → 设置事件标志, 等待释放进入 RELEASED
-- **RELEASED** → 下次 Scan 清除, 回到 IDLE
-- **单次触发**: 每次物理按下只返回一次事件, 长按不重复
+| 层级 | 优先级 | 中断 | 设计考量 |
+|------|--------|------|---------|
+| L1 (最高) | 5 | EXTI14 (Echo) | 测距实时性最关键, 延迟直接导致距离误差 |
+| L2 | 6 | TIM3 (计时) | 0.1ms 累加, 容错率高 |
+| L3 | 7 | USART1 (串口) | 有硬件缓冲, 容忍延迟 |
+| L4 (最低) | 15 | FreeRTOS (SVC/PendSV/SysTick) | RTOS 调度, 空闲时运行 |
+
+> 所有外设 ISR 优先级 (5/6/7) 均 < 11 (`configMAX_SYSCALL_INTERRUPT_PRIORITY`), 可安全调用 `xxxFromISR()` API。
 
 ---
 
@@ -205,11 +255,15 @@ system/*.c (HAL层)     ← 底层抽象: 定时器配置 / SysTick延时 / 时�
 
 ### 🟡 待改进项
 
-- [ ] 当前避障仅支持前进/后退, 未实现差速转向避障算法 (如左转避让)
-- [ ] 可扩展循迹传感器 (TCRT5000) / MPU6050 姿态控制 / 蓝牙/WiFi 通信模块
-- [ ] `Auto_Avoidance()` 中 `Delay_ms(500)` 是阻塞调用, 会冻结主循环 500ms; 可改用非超时状态机
-
-> ✅ **v3.1 更新 (2026-07-13)**: PA7 引脚冲突已修复 — 左电机反向方向脚从 PA7 迁移至 PA1, 超声波 Echo 独占 PA7, 所有 7 个功能模块均无引脚冲突。
+- [ ] **TIM4 PWM 频率偏低 (100Hz)**: `PSC=7199, ARR=99` → 100Hz, 会产生可闻电磁噪声。建议改为 `PSC=71, ARR=99` → 10kHz, 超出音频范围。
+- [ ] **`sound_GetValue()` 忙等阻塞**: `while(get_distance_flag==0){}` 不释放 CPU, 在 FreeRTOS 中应改用 `xSemaphoreTake()` 阻塞等待。
+- [x] **`Delay_us()` 忙等**: `while(TIM2->CNT != xus)` 不释放 CPU, 长时间延时会影响其他任务。
+- [ ] **Sound_distance / SendMsg 任务被注释**: 当前仅循迹功能激活, 超声波测距和串口消息处理未运行。
+- [x] **Motor.h 注释过时**: 仍写 "TIM2_CH3/PA2, 方向PA6+PA1", 与实际 TIM4 4通道代码不符。
+- [x] **IR.c 死代码**: NEC 红外模块未使用, 且与 LED(PA0) 和电机(TIM4) 冲突, 建议删除或重新分配资源。
+- [x] **`Delay.h` 参数类型不一致**: 声明 `uint32_t`, 实现为 `uint16_t`。
+- [ ] **无 OLED 状态显示**: 旧版 OLED 已移除, 当前仅数码管显示 0~9, 调试信息有限。
+- [ ] 可扩展: 蓝牙/WiFi 通信、MPU6050 姿态控制、PID 闭环调速、路径规划算法。
 
 ---
 
@@ -218,32 +272,40 @@ system/*.c (HAL层)     ← 底层抽象: 定时器配置 / SysTick延时 / 时�
 ### 编译与烧录
 
 ```text
-1. 打开工程: Keil µVision5 → Open Project → 32test.uvprojx
+1. 打开工程: Keil µVision5 → Open Project → *.uvprojx
 2. 编译: F7 (Build Target)
-3. 烧录: F8 (Download) — 通过 SWD/J-Link / ST-Link
+3. 烧录: F8 (Download) — 通过 SWD (推荐, 因 PA15 占用了 JTDI)
 4. 串口调试 (可选):
-   波特率 9600, 数据位 8, 停止位 1, 校验 None
+   波特率 115200, 数据位 8, 停止位 1, 校验 None
+   连接 PA9(TX) → USB-TTL RX, PA10(RX) → USB-TTL TX
 ```
+
+> ⚠️ **调试接口注意**: 因 PA15 作为按键输入, 必须禁用 JTAG 仅保留 SWD。Keil 烧录器配置选 SWD 模式, 勿选 JTAG。
 
 ### 快速上手
 
-1. **上电**: OLED 显示 "System Ready!" (1秒) → 切换到状态面板
-2. **默认状态**: Mode=STOP, 双轮静止, LED1 灭
-3. **开始自动避障**:
-   - 方式 A: 串口发送字符 `1`
-   - 方式 B: 按 K1 (PB12) 切换到 AUTO
-4. **手动控制**:
-   - 先切到手动模式: 串口发 `2` 或按 K1 到 MANUAL
-   - 键盘 WASD 或红外遥控器 1234 键控制方向
-5. **随时急停**: 串口发 `空格` / 按 K2 / 红外 VOL+ 键
+1. **硬件准备**:
+   - 循迹传感器接 PB12(右)/PB13(左), 调整高度使黑线上方输出高电平
+   - 电机驱动板 PB6~PB9 对应 H 桥 In1~In4
+   - 超声波 PB15(Trig)/PB14(Echo)
+   - 数码管 PA0~PA7 对应 A~G+DP (共阳极)
+   - 按键接 PA15 (按下接地)
+
+2. **上电**: FreeRTOS 启动, FollowLine 任务开始运行, 数码管显示 0
+
+3. **放置在黑线上**: 车辆自动循迹前进, 数码管显示转向方向 (1=左, 2=右)
+
+4. **丢线**: 车辆根据上次方向反向寻找, 3 秒超时后原地自旋
+
+5. **按键启动**: 按 PA15 按键触发 `SendMsg` 任务 (当前已注释, 需取消注释激活)
 
 ---
 
 ## 详细文档
 
-- 📋 [**IO 分配表**](./IO_TABLE.md) — 完整引脚分配 / 定时器参数计算 / NVIC 优先级表 / 通信接口 / 电源功耗 / H桥逻辑表 / 冲突记录
+- 📋 [**IO 分配表**](./IO_TABLE.md) — 完整引脚分配 / 定时器参数计算 / FreeRTOS 配置 / NVIC 优先级表 / H桥逻辑表 / 循迹状态机 / 数码管编码 / 与旧版差异对比
 
 ---
 
-*STM32 Smart Car v2.0 | Author: Steven Lin | License: MIT*
+*STM32 Smart Car v4.0 | Author: Steven Lin | License: MIT*
 *GitHub: https://github.com/Stevenlam604054442/STM32-SmartCar*
