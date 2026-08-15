@@ -52,7 +52,7 @@
           <OutputName>32test</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
-          <CreateHexFile>0</CreateHexFile>
+          <CreateHexFile>1</CreateHexFile>
           <DebugInformation>1</DebugInformation>
           <BrowseInformation>1</BrowseInformation>
           <ListingPath>.\Listings\</ListingPath>
@@ -336,7 +336,7 @@
               <MiscControls></MiscControls>
               <Define>USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>.\Start;.\user;.\library;.\system;.\Hardware</IncludePath>
+              <IncludePath>.\Start;.\user;.\library;.\system;.\Hardware;.\FREERTOS\include;.\FREERTOS\port</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -409,41 +409,6 @@
               <FileName>system_stm32f10x.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\Start\system_stm32f10x.h</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
-          <GroupName>system</GroupName>
-          <Files>
-            <File>
-              <FileName>Delay.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\system\Delay.h</FilePath>
-            </File>
-            <File>
-              <FileName>Delay.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\system\Delay.c</FilePath>
-            </File>
-            <File>
-              <FileName>Timer.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\system\Timer.h</FilePath>
-            </File>
-            <File>
-              <FileName>Timer.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\system\Timer.c</FilePath>
-            </File>
-            <File>
-              <FileName>sys.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\system\sys.c</FilePath>
-            </File>
-            <File>
-              <FileName>sys.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\system\sys.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -683,6 +648,36 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>system</GroupName>
+          <Files>
+            <File>
+              <FileName>Delay.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\system\Delay.h</FilePath>
+            </File>
+            <File>
+              <FileName>Delay.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\system\Delay.c</FilePath>
+            </File>
+            <File>
+              <FileName>Timer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\system\Timer.h</FilePath>
+            </File>
+            <File>
+              <FileName>Timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\system\Timer.c</FilePath>
+            </File>
+            <File>
+              <FileName>hardware.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\system\hardware.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>hardware</GroupName>
           <Files>
             <File>
@@ -706,21 +701,6 @@
               <FilePath>.\Hardware\LED.h</FilePath>
             </File>
             <File>
-              <FileName>OLED.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\OLED.c</FilePath>
-            </File>
-            <File>
-              <FileName>OLED.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\OLED.h</FilePath>
-            </File>
-            <File>
-              <FileName>OLED_Font.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\OLED_Font.h</FilePath>
-            </File>
-            <File>
               <FileName>Motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\Motor.c</FilePath>
@@ -729,16 +709,6 @@
               <FileName>Motor.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\Hardware\Motor.h</FilePath>
-            </File>
-            <File>
-              <FileName>PWM.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\PWM.c</FilePath>
-            </File>
-            <File>
-              <FileName>PWM.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\PWM.h</FilePath>
             </File>
             <File>
               <FileName>sound.c</FileName>
@@ -761,24 +731,14 @@
               <FilePath>.\Hardware\Serial.h</FilePath>
             </File>
             <File>
-              <FileName>IR.c</FileName>
+              <FileName>Irtracking.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Hardware\IR.c</FilePath>
+              <FilePath>.\Hardware\Irtracking.c</FilePath>
             </File>
             <File>
-              <FileName>IR.h</FileName>
+              <FileName>Irtracking.h</FileName>
               <FileType>5</FileType>
-              <FilePath>.\Hardware\IR.h</FilePath>
-            </File>
-            <File>
-              <FileName>remote.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\remote.c</FilePath>
-            </File>
-            <File>
-              <FileName>remote.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\remote.h</FilePath>
+              <FilePath>.\Hardware\Irtracking.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -804,6 +764,66 @@
               <FileName>stm32f10x_it.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\user\stm32f10x_it.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>freertos</GroupName>
+          <Files>
+            <File>
+              <FileName>FreeRTOSConfig.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\FREERTOS\port\FreeRTOSConfig.h</FilePath>
+            </File>
+            <File>
+              <FileName>heap_4.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\port\heap_4.c</FilePath>
+            </File>
+            <File>
+              <FileName>port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\port\port.c</FilePath>
+            </File>
+            <File>
+              <FileName>portmacro.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\FREERTOS\port\portmacro.h</FilePath>
+            </File>
+            <File>
+              <FileName>croutine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\croutine.c</FilePath>
+            </File>
+            <File>
+              <FileName>event_groups.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\event_groups.c</FilePath>
+            </File>
+            <File>
+              <FileName>list.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\list.c</FilePath>
+            </File>
+            <File>
+              <FileName>queue.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\queue.c</FilePath>
+            </File>
+            <File>
+              <FileName>tasks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\tasks.c</FilePath>
+            </File>
+            <File>
+              <FileName>timers.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\timers.c</FilePath>
+            </File>
+            <File>
+              <FileName>stream_buffer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FREERTOS\src\stream_buffer.c</FilePath>
             </File>
           </Files>
         </Group>

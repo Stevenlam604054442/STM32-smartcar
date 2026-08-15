@@ -23,7 +23,10 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f10x_it.h"
-
+#include "sound.h"
+#include "Serial.h"
+#include "Key.h"
+#include "hardware.h"
 /** @addtogroup STM32F10x_StdPeriph_Template
   * @{
   */
@@ -105,9 +108,9 @@ void UsageFault_Handler(void)
   * @param  None
   * @retval None
   */
-void SVC_Handler(void)
-{
-}
+//void SVC_Handler(void)
+//{
+//}
 
 /**
   * @brief  This function handles Debug Monitor exception.
@@ -123,18 +126,18 @@ void DebugMon_Handler(void)
   * @param  None
   * @retval None
   */
-void PendSV_Handler(void)
-{
-}
+//void PendSV_Handler(void)
+//{
+//}
 
 /**
   * @brief  This function handles SysTick Handler.
   * @param  None
   * @retval None
   */
-void SysTick_Handler(void)
-{
-}
+//void SysTick_Handler(void)
+//{
+//}
 
 /******************************************************************************/
 /*                 STM32F10x Peripherals Interrupt Handlers                   */
@@ -151,7 +154,61 @@ void SysTick_Handler(void)
 /*void PPP_IRQHandler(void)
 {
 }*/
+/**
+  * @brief  TIM3 中断服务函数 - Echo高电平期间持续计时
+  * @note   当PA7(Echo)为高电平时，Time++；低电平时停止计数
+  *         sound_GetValue()读取Time后计算距离并清零
+  */
+void TIM3_IRQHandler(void)
+{
+    if (TIM_GetITStatus(TIM3, TIM_IT_Update) == SET)
+    {
+        /* 仅在Echo引脚为高电平时累加计时 */
+        if (GPIO_ReadInputDataBit(SOUND_PORT, SOUND_Echo) == 1)
+        {
+            Sound_Time++;
+        }
+        TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
+    }
+}
 
+void EXTI15_10_IRQHandler(void)
+{
+    if(EXTI_GetITStatus(SOUND_EXIT_Line) == SET)
+    {
+		/*
+     * 距离计算:
+     *   Time 单位 = 0.1ms (由TIM3中断频率决定)
+     *   声速 ≈ 34000 mm/s = 34 mm/ms
+     *   单程距离 = Time × 0.1ms × 34 mm/ms / 2
+     *            = Time × 1.7 mm
+     */
+		distance = (Sound_Time * 17) / 10;
+		get_distance_flag=1;
+        // 清除中断挂起标志
+        EXTI_ClearITPendingBit(SOUND_EXIT_Line);
+    }
+	
+}
+/**
+  * 函    数：USART1中断函数
+  * 参    数：无
+  * 返 回 值：无
+  * 注意事项：此函数为中断函数，无需调用，中断触发后自动执行
+  *           函数名为预留的指定名称，可以从启动文件复制
+  *           请确保函数名正确，不能有任何差异，否则中断函数将不能进入
+  */
+void USART1_IRQHandler(void)
+{
+	if (USART_GetITStatus(USART1, USART_IT_RXNE) == SET)		//判断是否是USART1的接收事件触发的中断
+	{
+		Serial_RxData = USART_ReceiveData(USART1);				//读取数据寄存器，存放在接收的数据变量
+		Serial_RxFlag = 1;										//置接收标志位变量为1
+		USART_ClearITPendingBit(USART1, USART_IT_RXNE);			//清除USART1的RXNE标志位
+																//读取数据寄存器会自动清除此标志位
+																//如果已经读取了数据寄存器，也可以不执行此代码
+	}
+}
 /**
   * @}
   */ 

@@ -1,35 +1,18 @@
-/**
-  ******************************************************************************
-  * @file    Timer.c
-  * @brief   超声波测距定时器 - TIM3 输入捕获/中断模式
-  * @note    使用TIM3而非TIM2，因为TIM2已被PWM模块(电机控制)占用
-  *          定时器频率: 72MHz / (PSC+1) / (ARR+1) = 72MHz / 1 / 7200 = 10kHz
-  *          即每 0.1ms 触发一次中断，用于HC-SR04 Echo脉宽计时
-  ******************************************************************************
-  */
-
 #include "stm32f10x.h"
-
-/**
-  * @brief  超声波Echo脉宽计数值（全局变量，供sound.c读取）
-  * @note   每计数一次代表 0.1ms
-  */
-uint16_t Time;
 
 /**
   * @brief  TIM3 初始化 - 用于超声波测距的Echo信号高电平计时
   */
-void Timer_Init(void)
+void Sound_Timer_Init(void)
 {
-    Time = 0;
-
+	
     /* 开启时钟 */
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);     // 使能TIM3时钟
-
-    /* 配置时钟源为内部时钟 */
+    
+	/* 配置时钟源为内部时钟 */
     TIM_InternalClockConfig(TIM3);
-
-    /* 时基单元初始化 */
+    
+	/* 时基单元初始化 */
     TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
     TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;      // 不分频（用于滤波器时钟）
     TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;  // 向上计数模式
@@ -50,32 +33,84 @@ void Timer_Init(void)
     /* 使能更新中断 */
     TIM_ITConfig(TIM3, TIM_IT_Update, ENABLE);
 
-    /* NVIC 中断配置（分组2: 抢占优先级0~3, 响应优先级0~3） */
+
     NVIC_InitTypeDef NVIC_InitStructure;
     NVIC_InitStructure.NVIC_IRQChannel = TIM3_IRQn;                 // TIM3全局中断通道
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;                  // 使能该通道
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;        // 抢占优先级 = 2
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;               // 响应优先级 = 1
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;        // 抢占优先级 = 6
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;               // 响应优先级 = 1
     NVIC_Init(&NVIC_InitStructure);
 
     /* 使能TIM3定时器 */
     TIM_Cmd(TIM3, ENABLE);
 }
 
-/**
-  * @brief  TIM3 中断服务函数 - Echo高电平期间持续计时
-  * @note   当PA7(Echo)为高电平时，Time++；低电平时停止计数
-  *         sound_GetValue()读取Time后计算距离并清零
-  */
-void TIM3_IRQHandler(void)
+
+void Delay_Timer_Init(void)
 {
-    if (TIM_GetITStatus(TIM3, TIM_IT_Update) == SET)
-    {
-        /* 仅在Echo引脚为高电平时累加计时 */
-        if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_7) == 1)
-        {
-            Time++;
-        }
-        TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
-    }
+	
+    /* 开启时钟 */
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);     // 使能TIM2时钟
+    
+	/* 配置时钟源为内部时钟 */
+    TIM_InternalClockConfig(TIM2);
+    
+	/* 时基单元初始化 */
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
+    TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;      // 不分频（用于滤波器时钟）
+    TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;  // 向上计数模式
+    TIM_TimeBaseInitStructure.TIM_Period = 0xffff;                   
+ 
+    TIM_TimeBaseInitStructure.TIM_Prescaler = 72-1;                     
+    TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            // 重复计数器（仅高级定时器用）
+    TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStructure);
+
+    /* 使能TIM2定时器 */
+    TIM_Cmd(TIM2, ENABLE);
 }
+
+void PWM_Timer_Init(void)
+{
+	
+    /* 开启时钟 */
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);     // 使能TIM4时钟
+    
+	/* 配置时钟源为内部时钟 */
+    TIM_InternalClockConfig(TIM4);
+    
+	/* 时基单元初始化 */
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
+    TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;      // 不分频（用于滤波器时钟）
+    TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;  // 向上计数模式
+    TIM_TimeBaseInitStructure.TIM_Period = 100-1;                   
+ 
+    TIM_TimeBaseInitStructure.TIM_Prescaler = 7200-1;                     
+    TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            // 重复计数器（仅高级定时器用）
+    TIM_TimeBaseInit(TIM4, &TIM_TimeBaseInitStructure);
+	
+	/*输出比较初始化*/ 
+	TIM_OCInitTypeDef TIM_OCInitStructure;							//定义结构体变量
+	TIM_OCStructInit(&TIM_OCInitStructure);                         //结构体初始化，若结构体没有完整赋值
+	                                                                //则最好执行此函数，给结构体所有成员都赋一个默认值
+	                                                                //避免结构体初值不确定的问题
+	TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;               //输出比较模式，选择PWM模式1，CNT < CCR：输出 有效电平，CNT >= CCR：输出 无效电平
+	TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;       //输出极性，选择为高，若选择极性为低，则输出高低电平取反
+	TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;   //输出使能
+	TIM_OCInitStructure.TIM_Pulse = 0;								//初始的CCR值
+	TIM_OC1Init(TIM4, &TIM_OCInitStructure);                        //将结构体变量交给TIM_OC3Init，配置TIM2的输出比较通道3
+	TIM_OC2Init(TIM4, &TIM_OCInitStructure);
+	TIM_OC3Init(TIM4, &TIM_OCInitStructure);
+	TIM_OC4Init(TIM4, &TIM_OCInitStructure);
+	
+	//使能4个通道的预装载寄存器
+    TIM_OC1PreloadConfig(TIM4, TIM_OCPreload_Enable);//OC1
+    TIM_OC2PreloadConfig(TIM4, TIM_OCPreload_Enable);//OC2
+    TIM_OC3PreloadConfig(TIM4, TIM_OCPreload_Enable);//OC3
+    TIM_OC4PreloadConfig(TIM4, TIM_OCPreload_Enable);//OC4
+    TIM_ARRPreloadConfig(TIM4, ENABLE); //使能重装寄存器
+	  
+    /* 使能TIM4定时器 */
+    TIM_Cmd(TIM4, ENABLE);
+}
+
+
