@@ -4,10 +4,7 @@
 #include "Timer.h"
 #include "hardware.h"
 #include "Serial.h"
-/**
-  * @brief  电机硬件初始化（方向控制引脚）
-  * @note   PWM底层初始化由Motor_Init()内部调用PWM_Init()完成
-  */
+
 void Motor_Init(void)
 {
     /* 开启GPIOA时钟（方向控制引脚在GPIOA上） */

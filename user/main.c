@@ -42,7 +42,7 @@ TaskHandle_t FollowLine_handle;
 #define right 2
 #define left 1
 #define no_turn 0
-uint8_t last_line_turn=no_turn;
+uint8_t last_line_turn;
 
 void Sound_distance(void * pvParam)
 {
@@ -60,23 +60,32 @@ void Sound_distance(void * pvParam)
 
 void SendMsg(void * pvParam)
 {
+	int f=0;
+	int8_t sp=0;
 //	uint16_t getData;
 	while(1)
 	{
-		if(Get_key()==1){
-			find_line=1;
-			xSemaphoreGive(FindLine_Semaphore);
-			while(find_line==1){
-				if(IRtracking_Lo()==1||IRtracking_Ro()==1)xSemaphoreGive(FindLine_getline_Semaphore);								
-			}
-			
-		}
-//		if(xQueueReceive(Distance_SendQueue,&getData,portMAX_DELAY)==pdPASS)
-//		{
-//		Serial_Printf("%u%u\r\n",IRtracking_Lo(),IRtracking_Ro());
-//			
+		
+		
+		
+//		if(Get_key()==1){
+//			f=!f;
 //		}
-
+////		if(xQueueReceive(Distance_SendQueue,&getData,portMAX_DELAY)==pdPASS)
+////		{
+		Serial_Printf("%u%u%u%u%u\r\n",IRtracking_LL(),IRtracking_L(),IRtracking_M(),IRtracking_R(),IRtracking_RR());
+////			
+////		}
+//		if(f==1){
+//			Motor_SetSpeedLeft(sp);
+//			Motor_SetSpeedRight(sp);
+//			vTaskDelay(10);
+//			if(sp<70)sp++;
+//		}
+//		else{
+//			Motor_SetSpeedLeft(0);
+//			Motor_SetSpeedRight(0);
+//		}
 
 		
 	}
@@ -106,46 +115,62 @@ void FindLine(void * pvParam){
 
 void FollowLine(void * pvParam)
 {
+	int8_t sp=100;
+	int8_t err=0;
+	int8_t K=100;
+	int8_t adjust;
+	last_line_turn=no_turn;
 	while(1)
 	{
-		LED_show_num(last_line_turn);
-		if(IRtracking_Lo()==1||IRtracking_Ro()==1){
-			//LED_show_num(3);
-			Motor_SetSpeedLeft(20);
-			Motor_SetSpeedRight(20);
-			if(IRtracking_Lo()==1&&IRtracking_Ro()==0){
-				last_line_turn=left;
-				Motor_SetSpeedLeft(0);
-				Motor_SetSpeedRight(20);
-			}
-			else {			
-				last_line_turn=right;
-				Motor_SetSpeedLeft(20);
-				Motor_SetSpeedRight(0);
-			}				
+		adjust=K*err;
+		if(IRtracking_LL()==0&&IRtracking_L()==0&&IRtracking_RR()==0&&IRtracking_R()==0&&IRtracking_M()==0){
+			err=0;
+			sp=0;
+			LED_show_num(0);
+		}
+		else if((IRtracking_LL()==1)&&(IRtracking_RR()==0||IRtracking_R()==0)){
+			err=1;
+			sp=0;
+			K=100;
+			LED_show_num(1);
+			last_line_turn=left;
+		}
+		else if((IRtracking_L()==1)&&(IRtracking_RR()==0||IRtracking_R()==0)){
+			err=1;
+			sp=0;
+			K=40;
+			LED_show_num(2);
+			last_line_turn=left;
+		}
+		else if((IRtracking_RR()==1)&&(IRtracking_LL()==0||IRtracking_L()==0)){
+			err=-1;
+			sp=0;
+			K=100;
+			LED_show_num(3);
+			last_line_turn=right;
+		}
+		else if((IRtracking_R()==1)&&(IRtracking_LL()==0||IRtracking_L()==0)){
+			err=-1;
+			sp=0;
+			K=40;
+			LED_show_num(4);
+			last_line_turn=right;
+		}
+		else if(IRtracking_R()==0&&IRtracking_LL()==0&&IRtracking_L()==0&&IRtracking_RR()==0&&IRtracking_M()==1){
+			if(last_line_turn==right){err=-1;K=20;}
+			else if(last_line_turn==left){err=1;K=20;}
+			else err=0;
+			sp=100;
+			LED_show_num(5);
 		}
 		else{
-			if(last_line_turn==right){
-				Motor_SetSpeedLeft(20);
-				Motor_SetSpeedRight(0);
-			}
-			else if(last_line_turn==left){
-				Motor_SetSpeedLeft(0);
-				Motor_SetSpeedRight(20);
-			}
-			else {
-				find_line=1;
-				xSemaphoreGive(FindLine_Semaphore);
-				while(find_line==1){
-					if(IRtracking_Lo()==1||IRtracking_Ro()==1){
-						if(IRtracking_Lo()==1)last_line_turn=left;
-						else last_line_turn=right;
-						xSemaphoreGive(FindLine_getline_Semaphore);		
-					}						
-				}
-			}
-			
-		}
+			err=0;
+			sp=50;
+			LED_show_num(6);
+		}	
+		Motor_SetSpeedLeft(sp-adjust);
+		Motor_SetSpeedRight(sp+adjust);
+//		vTaskDelay(50);
 	}	
 	
 }
@@ -173,8 +198,8 @@ int main(void)
 	
 	//ÈÎÎñ
 	//xTaskCreate(Sound_distance,"Sound_distance",Sound_distance_STACK_SIZE,NULL,Sound_distance_PRIORITY,&Sound_distance_handle);
-	//xTaskCreate(SendMsg,"SendMsg",SendMsg_STACK_SIZE,NULL,SendMsg_PRIORITY,&SendMsg_handle);
-	xTaskCreate(FindLine,"FindLine",FindLine_STACK_SIZE,NULL,FindLine_PRIORITY,&FindLine_handle);
+//	xTaskCreate(SendMsg,"SendMsg",SendMsg_STACK_SIZE,NULL,SendMsg_PRIORITY,&SendMsg_handle);
+//	xTaskCreate(FindLine,"FindLine",FindLine_STACK_SIZE,NULL,FindLine_PRIORITY,&FindLine_handle);
 	xTaskCreate(FollowLine,"FollowLine",FollowLine_STACK_SIZE,NULL,FollowLine_PRIORITY,&FollowLine_handle);
 	
 	vTaskStartScheduler();

@@ -23,8 +23,11 @@
 #define TEST_UART_IRQ        USART1_IRQn
 
 /* ===== IRTRACKING ===== */
-#define IRTRACKING_Lo        GPIO_Pin_13
-#define IRTRACKING_Ro        GPIO_Pin_12
+#define IRTRACKING_RR        GPIO_Pin_4
+#define IRTRACKING_R        GPIO_Pin_1
+#define IRTRACKING_M        GPIO_Pin_5
+#define IRTRACKING_L        GPIO_Pin_12
+#define IRTRACKING_LL        GPIO_Pin_13
 #define IRTRACKING_PORT       GPIOB
 #define IRTRACKING_CLK        RCC_APB2Periph_GPIOB
 
